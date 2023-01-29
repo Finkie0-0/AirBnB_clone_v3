@@ -1,57 +1,65 @@
 #!/usr/bin/python3
-"""
-Flask route that returns json status response
-"""
+"""State API"""
 from api.v1.views import app_views
-from flask import abort, jsonify, make_response, request
-from flasgger import Swagger, swag_from
-from models import storage, CNC
+from flask import jsonify, request, abort
+from models import storage
+from models.state import State
 
 
-@app_views.route('/states', methods=['GET', 'POST'])
-@swag_from('swagger_yaml/states_no_id.yml', methods=['GET', 'POST'])
-def states_no_id():
-    """
-        states route to handle http method for requested states no id provided
-    """
-    if request.method == 'GET':
-        all_states = storage.all('State')
-        all_states = list(obj.to_json() for obj in all_states.values())
-        return jsonify(all_states)
-
-    if request.method == 'POST':
-        req_json = request.get_json()
-        if req_json is None:
-            abort(400, 'Not a JSON')
-        if req_json.get("name") is None:
-            abort(400, 'Missing name')
-        State = CNC.get("State")
-        new_object = State(**req_json)
-        new_object.save()
-        return jsonify(new_object.to_json()), 201
+@app_views.route("/states", strict_slashes=False, methods=['GET'])
+@app_views.route("/states/<string:state_id>", strict_slashes=False,
+                 methods=['GET'])
+def get_states(state_id=None):
+    """Returns all states objects or a given state"""
+    if state_id is not None:
+        state = storage.get(State, state_id)
+        if state is not None:
+            return jsonify(state.to_dict())
+        else:
+            return jsonify({'error': 'Not found'}), 404
+    states = list(storage.all(State).values())
+    return jsonify([state.to_dict() for state in states])
 
 
-@app_views.route('/states/<state_id>', methods=['GET', 'DELETE', 'PUT'])
-@swag_from('swagger_yaml/states_id.yml', methods=['PUT', 'GET', 'DELETE'])
-def states_with_id(state_id=None):
-    """
-        states route to handle http method for requested state by id
-    """
-    state_obj = storage.get('State', state_id)
-    if state_obj is None:
-        abort(404, 'Not found')
-
-    if request.method == 'GET':
-        return jsonify(state_obj.to_json())
-
-    if request.method == 'DELETE':
-        state_obj.delete()
-        del state_obj
+@app_views.route("/states/<string:state_id>", strict_slashes=False,
+                 methods=['DELETE'])
+def delete_state(state_id):
+    """Delete a state"""
+    state = storage.get(State, state_id)
+    if state is not None:
+        state.delete()
         return jsonify({})
+    abort(404)
 
-    if request.method == 'PUT':
-        req_json = request.get_json()
-        if req_json is None:
-            abort(400, 'Not a JSON')
-        state_obj.bm_update(req_json)
-        return jsonify(state_obj.to_json())
+
+@app_views.route("/states/", strict_slashes=False,
+                 methods=['POST'])
+def create_state():
+    """Create a state"""
+    if request.is_json:
+        data = request.get_json()
+        state_name = data.get('name', None)
+        if state_name is None:
+            abort(400, description='Missing name')
+        state = State(name=state_name)
+        state.save()
+        return jsonify(state.to_dict()), 201
+    abort(400, description='Not a JSON')
+
+
+@app_views.route("/states/<string:state_id>", strict_slashes=False,
+                 methods=['PUT'])
+def update_state(state_id):
+    """Updates a state"""
+    if request.is_json:
+        state = storage.get(State, state_id)
+        if state is not None:
+            data = request.get_json()
+            data = {k: v for k, v in data.items() if k != 'id' and
+                    k != 'created_at' and k != 'updated_at'}
+            for k, v in data.items():
+                setattr(state, k, v)
+            state.save()
+            return jsonify(state.to_dict()), 200
+        abort(404)
+    abort(400, description='Not a JSON')

@@ -1,75 +1,88 @@
 #!/usr/bin/python3
-"""
-Flask route that returns json status response
-"""
+"""Place Reviews API"""
 from api.v1.views import app_views
-from flask import abort, jsonify, request
-from flasgger.utils import swag_from
-from models import storage, CNC
+from flask import jsonify, request
+from models import storage
+from models.place import Place
+from models.review import Review
+from models.user import User
 
 
-@app_views.route('/places/<place_id>/reviews', methods=['GET', 'POST'])
-@swag_from('swagger_yaml/reviews_by_place.yml', methods=['GET', 'POST'])
-def reviews_per_place(place_id=None):
-    """
-        reviews route to handle http method for requested reviews by place
-    """
-    place_obj = storage.get('Place', place_id)
+@app_views.route("/places/<string:place_id>/reviews", strict_slashes=False,
+                 methods=['GET'])
+def get_place_reviews(place_id):
+    """Retrieves the list of all Review objects of a Place"""
+    place = storage.get(Place, place_id)
 
-    if request.method == 'GET':
-        if place_obj is None:
-            abort(404, 'Not found')
-        all_reviews = storage.all('Review')
-        place_reviews = [obj.to_json() for obj in all_reviews.values()
-                         if obj.place_id == place_id]
-        return jsonify(place_reviews)
-
-    if request.method == 'POST':
-        if place_obj is None:
-            abort(404, 'Not found')
-        req_json = request.get_json()
-        if req_json is None:
-            abort(400, 'Not a JSON')
-        user_id = req_json.get("user_id")
-        if user_id is None:
-            abort(400, 'Missing user_id')
-        user_obj = storage.get('User', user_id)
-        if user_obj is None:
-            abort(404, 'Not found')
-        if req_json.get('text') is None:
-            abort(400, 'Missing text')
-        Review = CNC.get("Review")
-        req_json['place_id'] = place_id
-        new_object = Review(**req_json)
-        new_object.save()
-        return jsonify(new_object.to_json()), 201
+    if place is None:
+        return jsonify({'error': 'Not found'}), 404
+    reviews = [review.to_dict() for review in place.reviews]
+    return jsonify(reviews), 200
 
 
-@app_views.route('/reviews/<review_id>', methods=['GET', 'DELETE', 'PUT'])
-@swag_from('swagger_yaml/reviews_id.yml', methods=['GET', 'DELETE', 'PUT'])
-def reviews_with_id(review_id=None):
-    """
-        reviews route to handle http methods for given review by ID
-    """
-    review_obj = storage.get('Review', review_id)
+@app_views.route("/reviews/<string:review_id>", strict_slashes=False,
+                 methods=['GET'])
+def get_review(review_id):
+    """Retrieves a Review object"""
+    review = storage.get(Review, review_id)
+    if review is None:
+        return jsonify({'error': 'Not found'}), 404
+    return jsonify(review.to_dict()), 200
 
-    if request.method == 'GET':
-        if review_obj is None:
-            abort(404, 'Not found')
-        return jsonify(review_obj.to_json())
 
-    if request.method == 'DELETE':
-        if review_obj is None:
-            abort(404, 'Not found')
-        review_obj.delete()
-        del review_obj
-        return jsonify({}), 200
+@app_views.route("/reviews/<string:review_id>", strict_slashes=False,
+                 methods=['DELETE'])
+def delete_review(review_id):
+    """Deletes a Review object"""
+    review = storage.get(Review, review_id)
+    if review is None:
+        return jsonify({'error': 'Not found'}), 404
+    review.delete()
+    return jsonify({}), 200
 
-    if request.method == 'PUT':
-        if review_obj is None:
-            abort(404, 'Not found')
-        req_json = request.get_json()
-        if req_json is None:
-            abort(400, 'Not a JSON')
-        review_obj.bm_update(req_json)
-        return jsonify(review_obj.to_json()), 200
+
+@app_views.route("/places/<string:place_id>/reviews", strict_slashes=False,
+                 methods=['POST'])
+def create_review(place_id):
+    """Creates a Review"""
+    place = storage.get(Place, place_id)
+    if place is None:
+        return jsonify({'error': 'Not found'}), 404
+
+    if request.is_json:
+        data = request.get_json()
+        user_id = data.get('user_id', None)
+        text = data.get('text', None)
+        if user_id is None or user_id == "":
+            return jsonify({'error': 'Missing user_id'}), 400
+        user = storage.get(User, user_id)
+        if user is None:
+            return jsonify({'error': 'Not found'}), 404
+
+        if text is None or text == "":
+            return jsonify({'error': 'Missing text'}), 400
+
+        review = Review(place_id=place_id, user_id=user_id, text=text)
+        review.save()
+        return jsonify(review.to_dict()), 201
+    return jsonify({'error': 'Not a JSON'}), 400
+
+
+@app_views.route("/reviews/<string:review_id>", strict_slashes=False,
+                 methods=['PUT'])
+def update_review(review_id):
+    """Updates a Review object"""
+    review = storage.get(Review, review_id)
+    if review is not None:
+        if request.is_json:
+            data = request.get_json()
+            data = {k: v for k, v in data.items() if k != 'id' and
+                    k != 'created_at' and k != 'updated_at' and
+                    k != 'user_id' and k != 'place_id'}
+            for k, v in data.items():
+                setattr(review, k, v)
+            review.save()
+            review = storage.get(Review, review_id)
+            return jsonify(review.to_dict()), 200
+        return jsonify({'error': 'Not a JSON'}), 400
+    return jsonify({'error': 'Not found'}), 404
